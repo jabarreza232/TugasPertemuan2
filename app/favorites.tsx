@@ -1,33 +1,107 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Image, Platform, ScrollView } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, TouchableOpacity, Image, Platform, ScrollView, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
+// IMPORT ASYNC STORAGE & REFRESH CONTROL 🔥
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { RefreshControl } from 'react-native';
+
+// Samakan interface agar sesuai dengan struktur data HomeScreen
+interface ListItem {
+    id: string;
+    title: string;
+    subtitle: string;
+    description: string;
+    category: string;
+    location: string;
+    image: string;
+    price: string;
+    rating: number;
+    hours: string;
+}
 
 export default function FavoritesScreen() {
     const router = useRouter();
     
-    // Data dummy untuk favorit
-    const [favorites, setFavorites] = useState([
-        {
-            id: '1',
-            title: 'Raja Ampat',
-            location: 'Papua Barat',
-            image: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e',
-            rating: 4.9,
-        },
-        {
-            id: '2',
-            title: 'Danau Toba',
-            location: 'Sumatera Utara',
-            image: 'https://images.unsplash.com/photo-1501785888041-af3ef285b470',
-            rating: 4.7,
-        }
-    ]);
+    const [favorites, setFavorites] = useState<ListItem[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
 
-    const removeFavorite = (id: string) => {
-        setFavorites(favorites.filter(item => item.id !== id));
+    // FUNGSI UTAMA UNTUK AMBIL DATA DARI ASYNC STORAGE & API 🔥
+    const loadFavoritesData = async () => {
+        try {
+            // 1. Ambil daftar ID yang difavoritkan dari AsyncStorage
+            const storedFavorites = await AsyncStorage.getItem('@favoriteIds');
+            const favoriteIds: string[] = storedFavorites ? JSON.parse(storedFavorites) : [];
+
+            if (favoriteIds.length === 0) {
+                setFavorites([]);
+                return;
+            }
+
+            // 2. Ambil data destinasi lengkap dari API Mock
+            const MOCK_API_URL = 'https://6a1439936c7db8aac0541617.mockapi.io/api/wisata';
+            const res = await fetch(MOCK_API_URL);
+            const allItems: ListItem[] = await res.json();
+
+            // 3. Filter data dari API: Hanya ambil yang ID-nya ada di list favorit
+            const filteredFavorites = allItems.filter(item => favoriteIds.includes(item.id));
+            setFavorites(filteredFavorites);
+
+        } catch (error) {
+            console.error("Gagal memuat data favorit:", error);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
     };
+
+    // Load data setiap kali halaman dibuka
+    useEffect(() => {
+        loadFavoritesData();
+    }, []);
+
+    // Fungsi Pull-to-Refresh
+    const onRefresh = useCallback(() => {
+        setRefreshing(true);
+        loadFavoritesData();
+    }, []);
+
+    // FUNGSI HAPUS FAVORIT & UPDATE DI ASYNC STORAGE 🔥
+    const removeFavorite = async (id: string) => {
+        try {
+            // 1. Ambil data ID dari storage saat ini
+            const storedFavorites = await AsyncStorage.getItem('@favoriteIds');
+            let favoriteIds: string[] = storedFavorites ? JSON.parse(storedFavorites) : [];
+            
+            // 2. Saring/hapus ID yang dipilih
+            favoriteIds = favoriteIds.filter(favId => favId !== id);
+            
+            // 3. Simpan kembali daftar ID yang baru ke AsyncStorage
+            await AsyncStorage.setItem('@favoriteIds', JSON.stringify(favoriteIds));
+            
+            // 4. Update UI State lokal agar item langsung hilang dari layar
+            setFavorites(prevFavorites => prevFavorites.filter(item => item.id !== id));
+        } catch (error) {
+            console.error("Gagal menghapus favorit dari storage:", error);
+        }
+    };
+
+    const handleItemPress = (item: ListItem) => {
+        router.push({
+            pathname: '/detail',
+            params: { ...item, rating: item.rating?.toString() || '' },
+        });
+    };
+
+    if (loading) {
+        return (
+            <View style={styles.centered}>
+                <ActivityIndicator size="large" color="#0a7ea4" />
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
@@ -40,7 +114,13 @@ export default function FavoritesScreen() {
                 <View style={{ width: 40 }} />
             </View>
 
-            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+                contentContainerStyle={styles.content} 
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#0a7ea4"]} />
+                }
+            >
                 {favorites.length === 0 ? (
                     <View style={styles.emptyState}>
                         <Ionicons name="heart-dislike-outline" size={64} color="#D1D5DB" />
@@ -53,26 +133,32 @@ export default function FavoritesScreen() {
                 ) : (
                     <View style={styles.listContainer}>
                         {favorites.map((item) => (
-                            <View key={item.id} style={styles.favoriteCard}>
-                                <Image source={{ uri: item.image }} style={styles.favoriteImage} />
-                                <View style={styles.favoriteInfo}>
-                                    <ThemedText style={styles.favoriteTitle} numberOfLines={1}>{item.title}</ThemedText>
-                                    <View style={styles.locationRow}>
-                                        <Ionicons name="location-outline" size={14} color="#6B7280" />
-                                        <ThemedText style={styles.favoriteLocation} numberOfLines={1}>{item.location}</ThemedText>
+                            <TouchableOpacity 
+                                key={item.id} 
+                                activeOpacity={0.8} 
+                                onPress={() => handleItemPress(item)}
+                            >
+                                <View style={styles.favoriteCard}>
+                                    <Image source={{ uri: item.image }} style={styles.favoriteImage} />
+                                    <View style={styles.favoriteInfo}>
+                                        <ThemedText style={styles.favoriteTitle} numberOfLines={1}>{item.title}</ThemedText>
+                                        <View style={styles.locationRow}>
+                                            <Ionicons name="location-outline" size={14} color="#6B7280" />
+                                            <ThemedText style={styles.favoriteLocation} numberOfLines={1}>{item.location}</ThemedText>
+                                        </View>
+                                        <View style={styles.ratingRow}>
+                                            <Ionicons name="star" size={14} color="#D97706" />
+                                            <ThemedText style={styles.ratingText}>{item.rating}</ThemedText>
+                                        </View>
                                     </View>
-                                    <View style={styles.ratingRow}>
-                                        <Ionicons name="star" size={14} color="#D97706" />
-                                        <ThemedText style={styles.ratingText}>{item.rating}</ThemedText>
-                                    </View>
+                                    <TouchableOpacity 
+                                        style={styles.removeBtn} 
+                                        onPress={() => removeFavorite(item.id)}
+                                    >
+                                        <Ionicons name="heart" size={24} color="#EF4444" />
+                                    </TouchableOpacity>
                                 </View>
-                                <TouchableOpacity 
-                                    style={styles.removeBtn} 
-                                    onPress={() => removeFavorite(item.id)}
-                                >
-                                    <Ionicons name="heart" size={24} color="#EF4444" />
-                                </TouchableOpacity>
-                            </View>
+                            </TouchableOpacity>
                         ))}
                     </View>
                 )}
@@ -83,6 +169,7 @@ export default function FavoritesScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#FAFAFA' },
+    centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FAFAFA' },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
